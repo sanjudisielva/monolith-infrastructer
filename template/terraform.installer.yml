@@ -1,0 +1,4 @@
+- task: TerraformInstaller@1
+  displayName: Install Terraform
+  inputs:
+    terraformVersion: $(tfVersion)
