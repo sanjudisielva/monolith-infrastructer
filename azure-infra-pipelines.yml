@@ -1,0 +1,135 @@
+trigger:
+  branches:
+    include:
+    - main
+    - feature/*
+
+pr:
+  branches:
+    include:
+    - main
+    - feature/*
+
+pool:
+  name: infra-pipeline
+
+############################
+# VARIABLES
+############################
+variables:
+- name: serviceConnection
+  value: infra-service-connection
+
+- name: tfVersion
+  value: latest
+
+- name: directory
+  value: '$(System.DefaultWorkingDirectory)/environment/pre-prod'
+
+############################
+# STAGES
+############################
+stages:
+
+# ---------- DEV ----------
+
+- stage: dev
+  displayName: DEV - Terraform Init, Scan & Plan
+  jobs:
+  - job: terraform_dev
+    displayName: Terraform DEV
+    steps:
+    - checkout: self
+    - task: TerraformInstaller@1
+      displayName: Install Terraform
+      inputs:
+        terraformVersion: $(tfVersion)
+# ---------- TFLINT ----------
+    - script: |
+        tflint --init
+        tflint
+      displayName: TFLint Scan
+      workingDirectory: $(directory)
+# ---------- TFSEC ----------      
+    - task: tfsec@1
+      displayName: tfsec Scan
+      inputs:
+        dir: $(directory)
+# ---------- TERRAFORM INIT ----------  
+      
+    - task: TerraformTask@5
+      displayName: Terraform Init
+      inputs:
+        provider: azurerm
+        command: init
+        workingDirectory: $(directory)
+        backendServiceArm: $(serviceConnection)
+        backendAzureRmStorageAccountName: sanjustorageaccount1
+        backendAzureRmContainerName: statefile
+        backendAzureRmKey: dev.tfstate
+# ---------- TERRAFORM VALIDATE ---------- 
+    - task: TerraformTask@5
+      displayName: Terraform Validate
+      inputs:
+        provider: azurerm
+        command: validate
+        workingDirectory: $(directory)
+# ---------- TERRAFORM PLAN ---------- 
+    - task: TerraformTask@5
+      displayName: Terraform Plan
+      inputs:
+        provider: azurerm
+        command: plan
+        workingDirectory: $(directory)
+        environmentServiceNameAzureRM: $(serviceConnection)
+
+
+
+# ---------- MANUAL APPROVAL ----------
+- stage: approval
+  displayName: Manual Approval
+  dependsOn: dev
+  jobs:
+  - job: manual_validation
+    pool: server
+    steps:
+    - task: ManualValidation@1
+      inputs:
+        notifyUsers: 'skgautam12061985@gmail.com'
+        approvers: 'skgautam12061985@gmail.com'
+        instructions: 'Approve to apply Terraform to PROD'
+
+# ---------- PROD ----------
+- stage: prod
+  displayName: PROD - Terraform Apply
+  dependsOn: approval
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+  jobs:
+  - job: terraform_prod
+    displayName: Terraform PROD
+    steps:
+    - checkout: self
+
+    - task: TerraformInstaller@1
+      displayName: Install Terraform
+      inputs:
+        terraformVersion: $(tfVersion)
+
+    - task: TerraformTask@5
+      displayName: Terraform Init
+      inputs:
+        provider: azurerm
+        command: init
+        workingDirectory: $(directory)
+        backendServiceArm: $(serviceConnection)
+        backendAzureRmStorageAccountName: sanjustorageaccount1
+        backendAzureRmContainerName: statefile
+        backendAzureRmKey: prod.tfstate
+
+    - task: TerraformTask@5
+      displayName: Terraform Apply
+      inputs:
+        provider: azurerm
+        command: apply
+        workingDirectory: $(directory)
+        environmentServiceNameAzureRM: $(serviceConnection)
